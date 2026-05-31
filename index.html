@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f5f7fb" />
+    <title>Weatherfit</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="weather-card" aria-labelledby="app-title">
+        <div class="top-bar" id="setupHeader">
+          <div>
+            <p class="eyebrow">Weatherfit</p>
+            <h1 id="app-title">Was ziehe ich an?</h1>
+          </div>
+          <div class="weather-orb" id="weatherOrb" aria-hidden="true">☁️</div>
+        </div>
+
+        <form class="question-panel" id="weatherForm">
+          <div class="field duration-field">
+            <span>Wie lange bist du draußen?</span>
+            <div class="duration-picker" role="group" aria-label="Dauer auswählen">
+              <button class="stepper-button" type="button" id="decreaseDuration" aria-label="Eine Stunde weniger">−</button>
+              <output class="duration-value" id="durationOutput">3 Stunden</output>
+              <button class="stepper-button" type="button" id="increaseDuration" aria-label="Eine Stunde mehr">+</button>
+            </div>
+            <div class="quick-durations" aria-label="Schnellauswahl">
+              <button type="button" data-hours="1">1 h</button>
+              <button type="button" data-hours="3" class="is-selected">3 h</button>
+              <button type="button" data-hours="6">6 h</button>
+              <button type="button" data-hours="10">10 h</button>
+            </div>
+          </div>
+
+          <div class="location-row">
+            <button class="primary-button" type="submit" id="locationButton">Standort verwenden</button>
+            <button class="secondary-button" type="button" id="manualToggle">Ort eingeben</button>
+          </div>
+
+          <div class="manual-location" id="manualLocation" hidden>
+            <label for="city">Ort</label>
+            <div class="city-row">
+              <input id="city" name="city" type="text" autocomplete="address-level2" placeholder="z.B. Berlin" />
+              <button type="button" id="cityButton">Prüfen</button>
+            </div>
+          </div>
+        </form>
+
+        <section class="result-panel" id="resultPanel" aria-live="polite" hidden>
+          <div class="result-header">
+            <div>
+              <p class="eyebrow" id="placeLabel">Dein Outfit</p>
+              <h2 id="summaryTitle">Sieht gut aus.</h2>
+            </div>
+            <p class="temperature-pill" id="temperaturePill">--°</p>
+          </div>
+
+          <div class="outfit-stage" aria-label="Emoji Outfit">
+            <div class="emoji-slot accessory" id="accessoryEmoji"></div>
+            <div class="emoji-slot layer" id="layerEmoji"></div>
+            <div class="emoji-slot top" id="topEmoji">👕</div>
+            <div class="emoji-slot pants" id="pantsEmoji">👖</div>
+            <div class="emoji-slot extra" id="extraEmoji"></div>
+          </div>
+
+          <div class="advice-grid">
+            <article>
+              <span>Oben</span>
+              <strong id="topAdvice">T-Shirt</strong>
+            </article>
+            <article>
+              <span>Unten</span>
+              <strong id="pantsAdvice">Lange Hose</strong>
+            </article>
+            <article>
+              <span>Sonne</span>
+              <strong id="sunAdvice">Keine Sonnenbrille</strong>
+            </article>
+            <article>
+              <span>Später</span>
+              <strong id="laterAdvice">Stabil</strong>
+            </article>
+          </div>
+
+          <p class="detail-line" id="detailLine"></p>
+          <button class="secondary-button restart-button" type="button" id="restartButton">Neu auswählen</button>
+        </section>
+
+        <p class="status-line" id="statusLine"></p>
+      </section>
+    </main>
+
+    <script src="app.js" defer></script>
+  </body>
+</html>
