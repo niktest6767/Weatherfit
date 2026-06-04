@@ -14,6 +14,8 @@ const resultPanel = document.querySelector("#resultPanel");
 const restartButton = document.querySelector("#restartButton");
 const statusLine = document.querySelector("#statusLine");
 const weatherOrb = document.querySelector("#weatherOrb");
+const CACHE_KEY = "weatherfit:last-good-recommendation";
+const CACHE_MAX_AGE = 3 * 60 * 60 * 1000;
 
 const ui = {
   placeLabel: document.querySelector("#placeLabel"),
@@ -118,8 +120,9 @@ async function useManualCity() {
     const data = await response.json();
     const match = data.results?.[0];
     if (!match) {
+      renderBackupRecommendation({ name: city }, "Ort nicht eindeutig erkannt");
       setLoading(false);
-      showStatus("Den Ort habe ich nicht gefunden. Versuch es mit Stadt und Land.");
+      showStatus("Ich empfehle vorsichtig.");
       return;
     }
 
@@ -129,44 +132,78 @@ async function useManualCity() {
       name: [match.name, match.admin1, match.country].filter(Boolean).join(", "),
     });
   } catch {
+    renderBackupRecommendation({ name: city }, "Ortssuche nicht erreichbar");
     setLoading(false);
-    showStatus("Gerade klappt die Ortssuche nicht. Prüfe deine Verbindung und versuch es nochmal.");
+    showStatus("Ich empfehle vorsichtig.");
   }
 }
 
 async function loadForecast(location) {
   try {
-    const params = new URLSearchParams({
-      latitude: String(location.latitude),
-      longitude: String(location.longitude),
-      timezone: "auto",
-      forecast_days: "2",
-      hourly: [
-        "temperature_2m",
-        "apparent_temperature",
-        "precipitation_probability",
-        "weather_code",
-        "cloud_cover",
-        "wind_speed_10m",
-        "uv_index",
-      ].join(","),
-    });
-
-    const response = await fetch(`https://api.open-meteo.com/v1/forecast?${params}`);
-    if (!response.ok) throw new Error("Forecast failed");
-    const data = await response.json();
+    const data = await fetchForecast(location);
     const recommendation = buildRecommendation(data, selectedDuration, location.name);
+    saveCachedRecommendation(location, selectedDuration, recommendation);
     renderRecommendation(recommendation);
     setLoading(false);
     showStatus("");
   } catch {
+    renderBackupRecommendation(location, "Wetterdienst nicht erreichbar");
     setLoading(false);
-    showStatus("Wetterdaten konnten nicht geladen werden. Versuch es gleich nochmal.");
+    showStatus("Ich empfehle vorsichtig.");
   }
+}
+
+async function fetchForecast(location) {
+  const params = new URLSearchParams({
+    latitude: String(location.latitude),
+    longitude: String(location.longitude),
+    timezone: "auto",
+    forecast_days: "2",
+    hourly: [
+      "temperature_2m",
+      "apparent_temperature",
+      "precipitation_probability",
+      "weather_code",
+      "cloud_cover",
+      "wind_speed_10m",
+      "uv_index",
+    ].join(","),
+  });
+
+  return fetchJsonWithRetry(`https://api.open-meteo.com/v1/forecast?${params}`, 2);
+}
+
+async function fetchJsonWithRetry(url, retries) {
+  let lastError;
+
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    let timeout;
+    try {
+      const controller = new AbortController();
+      timeout = setTimeout(() => controller.abort(), 8500);
+      const response = await fetch(url, { signal: controller.signal, cache: "no-store" });
+
+      if (!response.ok) throw new Error(`Request failed: ${response.status}`);
+      return await response.json();
+    } catch (error) {
+      lastError = error;
+      if (attempt < retries) await wait(450 + attempt * 650);
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  throw lastError;
+}
+
+function wait(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function buildRecommendation(data, durationHours, placeName) {
   const hourly = data.hourly;
+  if (!hourly?.time?.length) throw new Error("Missing forecast hours");
+
   const now = Date.now();
   const entries = hourly.time
     .map((time, index) => ({
@@ -179,8 +216,10 @@ function buildRecommendation(data, durationHours, placeName) {
       wind: hourly.wind_speed_10m[index] ?? 0,
       uv: hourly.uv_index[index] ?? 0,
     }))
-    .filter((entry) => entry.time >= now - 30 * 60 * 1000)
+    .filter((entry) => Number.isFinite(entry.time) && Number.isFinite(entry.feels) && entry.time >= now - 30 * 60 * 1000)
     .slice(0, Math.max(1, durationHours + 1));
+
+  if (!entries.length) throw new Error("No usable forecast hours");
 
   const temps = entries.map((entry) => entry.feels);
   const start = entries[0];
@@ -214,6 +253,87 @@ function buildRecommendation(data, durationHours, placeName) {
     later: getLaterText(colderLater, warmerLater, minFeels, maxFeels),
     detail: buildSimpleDetail(durationHours, currentFeels, minFeels, maxFeels, maxRain),
   };
+}
+
+function renderBackupRecommendation(location, reason) {
+  const cached = getCachedRecommendation(location, selectedDuration);
+  const recommendation = cached ?? buildFallbackRecommendation(location.name, selectedDuration, reason);
+  renderRecommendation(recommendation);
+}
+
+function saveCachedRecommendation(location, durationHours, recommendation) {
+  try {
+    localStorage.setItem(
+      CACHE_KEY,
+      JSON.stringify({
+        savedAt: Date.now(),
+        latitude: location.latitude,
+        longitude: location.longitude,
+        durationHours,
+        recommendation,
+      })
+    );
+  } catch {
+    // Safari private mode can reject localStorage; the app should continue quietly.
+  }
+}
+
+function getCachedRecommendation(location, durationHours) {
+  try {
+    const cached = JSON.parse(localStorage.getItem(CACHE_KEY) || "null");
+    if (!cached) return null;
+    if (Date.now() - cached.savedAt > CACHE_MAX_AGE) return null;
+    if (cached.durationHours !== durationHours) return null;
+
+    if (Number.isFinite(location.latitude) && Number.isFinite(cached.latitude)) {
+      const distance = Math.abs(location.latitude - cached.latitude) + Math.abs(location.longitude - cached.longitude);
+      if (distance > 0.35) return null;
+    }
+
+    return {
+      ...cached.recommendation,
+      title: "Vom letzten sicheren Wetter.",
+      detail: `${cached.recommendation.detail}  ✓ gespeichert`,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function buildFallbackRecommendation(placeName, durationHours, reason) {
+  const estimate = estimateSeasonalWeather();
+  const minFeels = estimate.min;
+  const maxFeels = estimate.max;
+  const currentFeels = estimate.current;
+  const maxRain = estimate.rain;
+  const colderLater = currentFeels - minFeels >= 3;
+  const warmerLater = maxFeels - currentFeels >= 4;
+  const top = getTopChoice(minFeels, currentFeels, colderLater, maxRain, estimate.wind);
+  const pants = getPantsChoice(minFeels, maxFeels, maxRain, estimate.wind);
+  const sun = getSunChoice(estimate.uv, estimate.cloud, maxRain);
+  const extra = getExtraChoice(maxRain, estimate.wind);
+
+  return {
+    placeName: placeName || "Weatherfit",
+    title: "Vorsichtig gut angezogen.",
+    moodEmoji: "☁️",
+    temperature: currentFeels,
+    range: `${minFeels} bis ${maxFeels}° geschätzt`,
+    top,
+    pants,
+    sun,
+    extra,
+    later: "Lieber flexibel",
+    detail: `🕒 ${durationHours}h  🌡️ ${minFeels}-${maxFeels}°  🛡️ ${reason}`,
+  };
+}
+
+function estimateSeasonalWeather() {
+  const month = new Date().getMonth();
+  if ([11, 0, 1].includes(month)) return { current: 5, min: 2, max: 7, rain: 45, cloud: 80, wind: 18, uv: 1 };
+  if ([2, 3, 9, 10].includes(month)) return { current: 13, min: 9, max: 16, rain: 40, cloud: 72, wind: 18, uv: 2 };
+  if ([4, 8].includes(month)) return { current: 18, min: 14, max: 21, rain: 35, cloud: 62, wind: 14, uv: 3 };
+  return { current: 24, min: 20, max: 28, rain: 30, cloud: 45, wind: 12, uv: 5 };
 }
 
 function buildSimpleDetail(durationHours, currentFeels, minFeels, maxFeels, maxRain) {
